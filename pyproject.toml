@@ -1,0 +1,16 @@
+[project]
+name = "advanced-rag-pipeleine"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "chromadb>=1.5.9",
+    "ollama>=0.6.3",
+    "pymupdf>=1.28.2",
+    "python-docx>=1.2.0",
+    "rank-bm25>=0.2.2",
+    "requests>=2.34.2",
+    "streamlit>=1.64.0",
+    "trafilatura>=2.2.0",
+]

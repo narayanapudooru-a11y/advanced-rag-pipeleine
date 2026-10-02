@@ -1,0 +1,12 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.env
+
+
+# IDEs and Editors (Optional but recommended)
+.idea/
+.vscode/
+chroma_db/
