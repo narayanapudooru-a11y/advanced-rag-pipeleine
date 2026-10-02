@@ -7,8 +7,9 @@ Retrieval pipeline:
   3. Store embeddings in ChromaDB (persisted to disk)
   4. On startup, rebuild an in-memory BM25 index from all ChromaDB chunks
   5. At query time, run BOTH ChromaDB vector search AND BM25 keyword search
-  6. Merge their ranked results with Reciprocal Rank Fusion (RRF)
-  7. Pass the top-k fused chunks to Ollama (llama3.2) as grounded context
+    6. Merge their ranked results with Reciprocal Rank Fusion (RRF)
+    7. Re-rank the fused candidates with a cross-encoder
+    8. Pass the top-k chunks to Ollama as grounded context
 
 Why hybrid?
   - Vector search finds semantically similar chunks even with different words
@@ -35,8 +36,10 @@ CHAT_MODEL       = "qwen3.5:2b"
 CHUNK_SIZE       = 500     # characters per chunk
 CHUNK_OVERLAP    = 50      # overlap between consecutive chunks
 TOP_K            = 5       # candidates from each retriever before fusion
-FINAL_TOP_K      = 3       # chunks sent to the LLM after RRF re-ranking
+RERANK_CANDIDATE_K = 20    # fused candidates scored by the cross-encoder
+FINAL_TOP_K      = 3       # chunks sent to the LLM after cross-encoder reranking
 RRF_K            = 60      # RRF constant (higher = smoother rank blending)
+CROSS_ENCODER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 DB_PATH          = "chroma_db"
 COLLECTION_NAME  = "rag_documents"
 
@@ -93,7 +96,10 @@ class HybridStore:
         self,
         db_path: str = DB_PATH,
         collection_name: str = COLLECTION_NAME,
+        reranker=None,
     ):
+        self._reranker = reranker
+
         # --- Dense store (persisted) ---
         self.client = chromadb.PersistentClient(path=db_path)
         self.collection = self.client.get_or_create_collection(
@@ -191,6 +197,20 @@ class HybridStore:
         ranked = sorted(scores.values(), key=lambda x: x["rrf_score"], reverse=True)
         return [entry["data"] for entry in ranked[:final_top_k]]
 
+    def _rerank(self, query: str, candidates: list[dict], top_k: int) -> list[dict]:
+        """Score fused candidates for query relevance and return the best top_k."""
+        if not candidates:
+            return []
+        if self._reranker is None:
+            from sentence_transformers import CrossEncoder
+
+            self._reranker = CrossEncoder(CROSS_ENCODER_MODEL)
+
+        pairs = [(query, candidate["text"]) for candidate in candidates]
+        scores = self._reranker.predict(pairs)
+        ranked = sorted(zip(scores, candidates), key=lambda item: item[0], reverse=True)
+        return [candidate for _, candidate in ranked[:top_k]]
+
     # ------------------------------------------------------------------ #
     # Public API                                                           #
     # ------------------------------------------------------------------ #
@@ -216,7 +236,7 @@ class HybridStore:
 
     def search(self, query: str, query_embedding: list[float], top_k: int = FINAL_TOP_K) -> list[dict]:
         """
-        Hybrid search: vector (ChromaDB) + keyword (BM25), merged with RRF.
+        Hybrid search: vector + BM25, fused with RRF, then cross-encoder reranked.
 
         Args:
             query:           raw query string (for BM25)
@@ -226,10 +246,13 @@ class HybridStore:
         Returns:
             list of {"text": ..., "source": ...} dicts, best-first.
         """
-        candidate_k = max(top_k * 2, TOP_K)   # fetch more candidates, prune after RRF
+        candidate_k = max(top_k * 2, TOP_K, RERANK_CANDIDATE_K)
         vec_results  = self._vector_search(query_embedding, top_k=candidate_k)
         bm25_results = self._bm25_search(query, top_k=candidate_k)
-        return self._rrf(vec_results, bm25_results, k=RRF_K, final_top_k=top_k)
+        candidates = self._rrf(
+            vec_results, bm25_results, k=RRF_K, final_top_k=candidate_k
+        )
+        return self._rerank(query, candidates, top_k=top_k)
 
     def count(self) -> int:
         return self.collection.count()

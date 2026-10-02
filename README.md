@@ -22,6 +22,7 @@ Query
 ## Features
 
 - **Hybrid retrieval** — BM25 + ChromaDB dense vectors merged with Reciprocal Rank Fusion
+- **Cross-encoder reranking** — rescores the top 20 fused candidates for query relevance
 - **Multi-format ingestion** — PDF, DOCX, TXT, MD, and any public URL
 - **Fully local** — Ollama runs both the embedding model and the LLM on your machine
 - **Persistent index** — ChromaDB stores vectors to disk; BM25 rebuilds from it on startup
@@ -79,6 +80,7 @@ streamlit run app.py
 ```
 
 The app opens at `http://localhost:8501`.
+The cross-encoder model is downloaded from Hugging Face and cached locally the first time you ask a question; subsequent searches run locally.
 
 ### 4. Add documents
 
@@ -150,7 +152,10 @@ Question
     │   score(chunk) = Σ  1 / (60 + rank)   ← summed over each list
     │
     ▼
-  top-3 fused chunks  →  grounded prompt  →  ollama.chat(llama3.2)  →  Answer
+  cross-encoder scores (question, chunk) pairs
+    │
+    ▼
+  top-3 reranked chunks  →  grounded prompt  →  ollama.chat  →  Answer
 ```
 
 ### Reciprocal Rank Fusion
@@ -170,8 +175,10 @@ All tunable constants are at the top of `rag_system.py`:
 | `CHUNK_SIZE` | `500` | Characters per chunk |
 | `CHUNK_OVERLAP` | `50` | Overlap between chunks |
 | `TOP_K` | `5` | Candidates fetched from each retriever |
-| `FINAL_TOP_K` | `3` | Chunks passed to the LLM after RRF |
+| `RERANK_CANDIDATE_K` | `20` | Fused candidates scored by the cross-encoder |
+| `FINAL_TOP_K` | `3` | Reranked chunks passed to the LLM |
 | `RRF_K` | `60` | RRF smoothing constant |
+| `CROSS_ENCODER_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Hugging Face cross-encoder model |
 | `DB_PATH` | `chroma_db` | ChromaDB persistence directory |
 
 ---
@@ -183,6 +190,7 @@ All tunable constants are at the top of `rag_system.py`:
 | `ollama` | Local LLM and embedding inference |
 | `chromadb` | Persistent vector database (HNSW, cosine) |
 | `rank-bm25` | BM25Okapi keyword search index |
+| `sentence-transformers` | Cross-encoder candidate reranking |
 | `pymupdf` | PDF text extraction (no poppler needed) |
 | `python-docx` | DOCX paragraph extraction |
 | `trafilatura` | URL main-content scraping |
@@ -209,7 +217,6 @@ BM25 resets automatically on the next app start since it rebuilds from ChromaDB.
 
 Ideas for extending this system:
 
-- **Cross-encoder reranking** — after RRF, score each (query, chunk) pair with a `sentence-transformers` cross-encoder for higher precision
 - **Streaming responses** — `ollama.chat(stream=True)` + `st.write_stream()` for token-by-token output
 - **Semantic chunking** — split on topic boundary shifts (cosine distance between consecutive sentence embeddings) instead of fixed character counts
 - **Conversation memory** — pass prior turns as message history so the model can handle follow-up questions
