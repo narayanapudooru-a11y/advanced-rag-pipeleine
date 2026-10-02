@@ -1,10 +1,5 @@
 # advanced-rag-pipeleine
 advanced rag pipeline
-# 🎥 YouTube Tutorial
-
-Want to understand how this project works step by step?
-
-[Video walkthrough](https://youtu.be/O9NFgOlzHts)
 
 # Hybrid RAG System — Ollama + ChromaDB + BM25
 
